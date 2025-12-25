@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="ja" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>家計簿</title>
+  <script src="/_sdk/data_sdk.js"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      box-sizing: border-box;
+    }
+  </style>
+  <style>@view-transition { navigation: auto; }</style>
+ </head>
+ <body class="h-full">
+  <div id="app" class="w-full h-full overflow-auto bg-gradient-to-br from-purple-50 to-blue-50"></div>
+  <script>
+    const defaultConfig = {
+      app_title: "家計簿",
+      drink_label: "飲食費",
+      shopping_label: "買い物",
+      transport_label: "交通費",
+      background_color: "#f3e8ff",
+      surface_color: "#ffffff",
+      text_color: "#1f2937",
+      primary_action_color: "#8b5cf6",
+      secondary_action_color: "#6b7280"
+    };
+
+    let expenses = [];
+    let currentCategory = "";
+    let currentAmount = "";
+    let currentMonth = new Date().toISOString().slice(0, 7);
+    let customCategories = [];
+
+    async function onConfigChange(config) {
+      const appTitle = config.app_title || defaultConfig.app_title;
+      const drinkLabel = config.drink_label || defaultConfig.drink_label;
+      const shoppingLabel = config.shopping_label || defaultConfig.shopping_label;
+      const transportLabel = config.transport_label || defaultConfig.transport_label;
+      const bgColor = config.background_color || defaultConfig.background_color;
+      const surfaceColor = config.surface_color || defaultConfig.surface_color;
+      const textColor = config.text_color || defaultConfig.text_color;
+      const primaryColor = config.primary_action_color || defaultConfig.primary_action_color;
+      const secondaryColor = config.secondary_action_color || defaultConfig.secondary_action_color;
+
+      document.getElementById('app').style.background = `linear-gradient(to bottom right, ${bgColor}, ${surfaceColor})`;
+      document.getElementById('app-title').textContent = appTitle;
+      document.getElementById('app-title').style.color = textColor;
+      
+      const categoryButtons = document.querySelectorAll('.category-btn');
+      categoryButtons.forEach((btn, index) => {
+        if (index === 0) btn.querySelector('.category-label').textContent = drinkLabel;
+        if (index === 1) btn.querySelector('.category-label').textContent = shoppingLabel;
+        if (index === 2) btn.querySelector('.category-label').textContent = transportLabel;
+        btn.style.backgroundColor = surfaceColor;
+        btn.style.color = textColor;
+      });
+
+      document.querySelectorAll('.card').forEach(card => {
+        card.style.backgroundColor = surfaceColor;
+        card.style.color = textColor;
+      });
+
+      document.querySelectorAll('.calc-btn').forEach(btn => {
+        btn.style.backgroundColor = surfaceColor;
+        btn.style.color = textColor;
+      });
+
+      document.getElementById('add-btn').style.backgroundColor = primaryColor;
+      document.getElementById('clear-btn').style.backgroundColor = secondaryColor;
+
+      renderExpenses();
+    }
+
+    function renderApp() {
+      const app = document.getElementById('app');
+      app.innerHTML = `
+        <div class="max-w-4xl mx-auto p-4 sm:p-6">
+          <h1 id="app-title" class="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6 text-center">${defaultConfig.app_title}</h1>
+          
+          <div class="card rounded-xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">
+            <div class="mb-4">
+              <label class="block text-sm font-medium mb-2">月を選択</label>
+              <input type="month" id="month-select" value="${currentMonth}" 
+                class="w-full px-3 sm:px-4 py-2 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+            </div>
+            
+            <div class="mb-4">
+              <label class="block text-sm font-medium mb-2">カテゴリー</label>
+              <div class="grid grid-cols-3 gap-2 sm:gap-3 mb-3">
+                <button class="category-btn rounded-lg p-3 sm:p-4 hover:shadow-md transition-all duration-200" data-category="drink">
+                  <div class="text-2xl sm:text-3xl mb-1 sm:mb-2">🍻</div>
+                  <div class="category-label text-xs sm:text-sm font-medium">${defaultConfig.drink_label}</div>
+                </button>
+                <button class="category-btn rounded-lg p-3 sm:p-4 hover:shadow-md transition-all duration-200" data-category="shopping">
+                  <div class="text-2xl sm:text-3xl mb-1 sm:mb-2">🛒</div>
+                  <div class="category-label text-xs sm:text-sm font-medium">${defaultConfig.shopping_label}</div>
+                </button>
+                <button class="category-btn rounded-lg p-3 sm:p-4 hover:shadow-md transition-all duration-200" data-category="transport">
+                  <div class="text-2xl sm:text-3xl mb-1 sm:mb-2">🚃</div>
+                  <div class="category-label text-xs sm:text-sm font-medium">${defaultConfig.transport_label}</div>
+                </button>
+              </div>
+              <div id="custom-categories" class="grid grid-cols-3 gap-2 sm:gap-3"></div>
+              <button id="add-category-btn" class="w-full mt-3 px-3 sm:px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg hover:border-purple-400 transition-all duration-200 text-xs sm:text-sm">
+                ＋ カテゴリー追加（最大2つまで）
+              </button>
+            </div>
+
+            <div class="mb-4">
+              <label class="block text-sm font-medium mb-2">金額</label>
+              <div id="amount-display" class="text-2xl sm:text-3xl font-bold text-right mb-3 sm:mb-4 p-3 sm:p-4 bg-gray-50 rounded-lg min-h-[50px] sm:min-h-[60px] flex items-center justify-end">0</div>
+              <div class="grid grid-cols-3 gap-2">
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="7">7</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="8">8</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="9">9</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="4">4</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="5">5</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="6">6</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="1">1</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="2">2</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="3">3</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="0">0</button>
+                <button class="calc-btn text-lg sm:text-xl py-3 sm:py-4 rounded-lg hover:shadow-md transition-all duration-200 active:scale-95" data-num="00">00</button>
+                <button id="clear-btn" class="text-lg sm:text-xl py-3 sm:py-4 rounded-lg text-white hover:shadow-md transition-all duration-200 active:scale-95">C</button>
+              </div>
+            </div>
+
+            <button id="add-btn" class="w-full text-white text-base sm:text-lg font-semibold py-3 sm:py-4 rounded-lg hover:shadow-lg transition-all duration-200 active:scale-95">
+              登録
+            </button>
+          </div>
+
+          <div class="card rounded-xl shadow-lg p-4 sm:p-6">
+            <h2 class="text-lg sm:text-xl font-bold mb-3 sm:mb-4">月間合計</h2>
+            <div id="monthly-summary" class="mb-4 sm:mb-6"></div>
+            <h3 class="text-base sm:text-lg font-semibold mb-3">詳細</h3>
+            <div id="expense-list"></div>
+          </div>
+        </div>
+      `;
+
+      attachEventListeners();
+      renderCustomCategories();
+    }
+
+    function attachEventListeners() {
+      document.getElementById('month-select').addEventListener('change', (e) => {
+        currentMonth = e.target.value;
+        renderExpenses();
+      });
+
+      document.querySelectorAll('.category-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('ring-4', 'ring-purple-400'));
+          document.querySelectorAll('.custom-category-btn').forEach(b => b.classList.remove('ring-4', 'ring-purple-400'));
+          btn.classList.add('ring-4', 'ring-purple-400');
+          currentCategory = btn.dataset.category;
+        });
+      });
+
+      document.querySelectorAll('.calc-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const num = btn.dataset.num;
+          if (num) {
+            currentAmount += num;
+            updateAmountDisplay();
+          }
+        });
+      });
+
+      document.getElementById('clear-btn').addEventListener('click', () => {
+        currentAmount = "";
+        updateAmountDisplay();
+      });
+
+      document.getElementById('add-btn').addEventListener('click', addExpense);
+
+      document.getElementById('add-category-btn').addEventListener('click', () => {
+        if (customCategories.length >= 2) {
+          showMessage('カテゴリーは最大2つまでです');
+          return;
+        }
+        showAddCategoryModal();
+      });
+    }
+
+    function renderCustomCategories() {
+      const container = document.getElementById('custom-categories');
+      container.innerHTML = customCategories.map(cat => `
+        <div class="relative">
+          <button class="custom-category-btn category-btn rounded-lg p-3 sm:p-4 hover:shadow-md transition-all duration-200 w-full" data-category="${cat.id}">
+            <div class="text-2xl sm:text-3xl mb-1 sm:mb-2">${cat.emoji}</div>
+            <div class="text-xs sm:text-sm font-medium">${cat.label}</div>
+          </button>
+          <button class="delete-category-btn absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-red-600 transition-all duration-200" data-category-id="${cat.id}">
+            ×
+          </button>
+        </div>
+      `).join('');
+
+      document.querySelectorAll('.custom-category-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('ring-4', 'ring-purple-400'));
+          document.querySelectorAll('.custom-category-btn').forEach(b => b.classList.remove('ring-4', 'ring-purple-400'));
+          btn.classList.add('ring-4', 'ring-purple-400');
+          currentCategory = btn.dataset.category;
+        });
+      });
+
+      document.querySelectorAll('.delete-category-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const categoryId = btn.dataset.categoryId;
+          const category = customCategories.find(c => c.id === categoryId);
+          if (category) {
+            showDeleteCategoryModal(categoryId, category.label);
+          }
+        });
+      });
+
+      document.getElementById('add-category-btn').style.display = customCategories.length >= 2 ? 'none' : 'block';
+    }
+
+    function updateAmountDisplay() {
+      const display = document.getElementById('amount-display');
+      display.textContent = currentAmount || '0';
+    }
+
+    async function addExpense() {
+      if (!currentCategory) {
+        showMessage('カテゴリーを選択してください');
+        return;
+      }
+      if (!currentAmount || parseInt(currentAmount) === 0) {
+        showMessage('金額を入力してください');
+        return;
+      }
+
+      if (expenses.length >= 999) {
+        showMessage('データの上限（999件）に達しました');
+        return;
+      }
+
+      const btn = document.getElementById('add-btn');
+      btn.disabled = true;
+      btn.textContent = '登���中...';
+
+      const result = await window.dataSdk.create({
+        id: Date.now().toString(),
+        category: currentCategory,
+        amount: parseInt(currentAmount),
+        month: currentMonth,
+        createdAt: new Date().toISOString()
+      });
+
+      btn.disabled = false;
+      btn.textContent = '登録';
+
+      if (result.isOk) {
+        currentAmount = "";
+        currentCategory = "";
+        updateAmountDisplay();
+        document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('ring-4', 'ring-purple-400'));
+        document.querySelectorAll('.custom-category-btn').forEach(b => b.classList.remove('ring-4', 'ring-purple-400'));
+        showMessage('登録しました');
+      } else {
+        showMessage('エラーが発生しました');
+      }
+    }
+
+    function renderExpenses() {
+      const monthExpenses = expenses.filter(e => e.month === currentMonth);
+      
+      const categoryTotals = {};
+      const categoryLabels = {
+        'drink': window.elementSdk?.config?.drink_label || defaultConfig.drink_label,
+        'shopping': window.elementSdk?.config?.shopping_label || defaultConfig.shopping_label,
+        'transport': window.elementSdk?.config?.transport_label || defaultConfig.transport_label
+      };
+
+      customCategories.forEach(cat => {
+        categoryLabels[cat.id] = cat.label;
+      });
+
+      monthExpenses.forEach(expense => {
+        if (!categoryTotals[expense.category]) {
+          categoryTotals[expense.category] = 0;
+        }
+        categoryTotals[expense.category] += expense.amount;
+      });
+
+      const total = Object.values(categoryTotals).reduce((sum, val) => sum + val, 0);
+
+      const summaryHtml = `
+        <div class="space-y-2 sm:space-y-3">
+          ${Object.entries(categoryTotals).map(([cat, amount]) => {
+            const emoji = cat === 'drink' ? '🍻' : cat === 'shopping' ? '🛒' : cat === 'transport' ? '🚃' : 
+                         customCategories.find(c => c.id === cat)?.emoji || '📌';
+            const label = categoryLabels[cat] || cat;
+            return `
+              <div class="flex justify-between items-center p-2 sm:p-3 bg-gray-50 rounded-lg">
+                <span class="flex items-center gap-2">
+                  <span class="text-xl sm:text-2xl">${emoji}</span>
+                  <span class="font-medium text-sm sm:text-base">${label}</span>
+                </span>
+                <span class="font-bold text-base sm:text-lg">¥${amount.toLocaleString()}</span>
+              </div>
+            `;
+          }).join('')}
+          <div class="flex justify-between items-center p-3 sm:p-4 bg-purple-100 rounded-lg text-base sm:text-lg font-bold">
+            <span>合計</span>
+            <span>¥${total.toLocaleString()}</span>
+          </div>
+        </div>
+      `;
+
+      const listHtml = monthExpenses.length === 0 ? 
+        '<p class="text-gray-500 text-center py-4 text-sm sm:text-base">データがありません</p>' :
+        monthExpenses.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(expense => {
+          const emoji = expense.category === 'drink' ? '🍻' : expense.category === 'shopping' ? '🛒' : 
+                       expense.category === 'transport' ? '🚃' : 
+                       customCategories.find(c => c.id === expense.category)?.emoji || '📌';
+          const label = categoryLabels[expense.category] || expense.category;
+          return `
+            <div class="flex justify-between items-center p-2 sm:p-3 border-b border-gray-200 last:border-0">
+              <span class="flex items-center gap-2">
+                <span class="text-lg sm:text-xl">${emoji}</span>
+                <span class="text-sm sm:text-base">${label}</span>
+              </span>
+              <div class="flex items-center gap-2 sm:gap-3">
+                <span class="font-semibold text-sm sm:text-base">¥${expense.amount.toLocaleString()}</span>
+                <button class="delete-btn text-red-500 hover:text-red-700 px-1 sm:px-2 text-xs sm:text-sm" data-id="${expense.__backendId}">削除</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+      document.getElementById('monthly-summary').innerHTML = summaryHtml;
+      document.getElementById('expense-list').innerHTML = listHtml;
+
+      document.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const id = btn.dataset.id;
+          const expense = expenses.find(e => e.__backendId === id);
+          if (expense) {
+            btn.disabled = true;
+            btn.textContent = '削除中...';
+            const result = await window.dataSdk.delete(expense);
+            if (!result.isOk) {
+              btn.disabled = false;
+              btn.textContent = '削除';
+              showMessage('エラーが発生しました');
+            }
+          }
+        });
+      });
+    }
+
+    function showAddCategoryModal() {
+      const modal = document.createElement('div');
+      modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+      modal.innerHTML = `
+        <div class="bg-white rounded-xl p-6 max-w-sm w-full">
+          <h3 class="text-xl font-bold mb-4">カテゴリー追加</h3>
+          <div class="mb-4">
+            <label class="block text-sm font-medium mb-2">絵文字</label>
+            <input type="text" id="emoji-input" placeholder="🏠" maxlength="2" 
+              class="w-full px-4 py-3 text-2xl text-center border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+          </div>
+          <div class="mb-6">
+            <label class="block text-sm font-medium mb-2">カテゴリー名</label>
+            <input type="text" id="label-input" placeholder="例：住居費" 
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+          </div>
+          <div class="flex gap-3">
+            <button id="cancel-modal" class="flex-1 px-4 py-3 bg-gray-200 text-gray-800 rounded-lg font-semibold hover:bg-gray-300 transition-all duration-200">
+              キャンセル
+            </button>
+            <button id="confirm-modal" class="flex-1 px-4 py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-all duration-200">
+              追加
+            </button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      document.getElementById('cancel-modal').addEventListener('click', () => modal.remove());
+      document.getElementById('confirm-modal').addEventListener('click', () => {
+        const emoji = document.getElementById('emoji-input').value.trim();
+        const label = document.getElementById('label-input').value.trim();
+        
+        if (!emoji) {
+          showMessage('絵文字を入力してください');
+          return;
+        }
+        if (!label) {
+          showMessage('カテゴリー名を入力してください');
+          return;
+        }
+        
+        customCategories.push({ emoji, label, id: Date.now().toString() });
+        renderCustomCategories();
+        modal.remove();
+        showMessage('カテゴリーを追加しました');
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+    }
+
+    function showDeleteCategoryModal(categoryId, categoryLabel) {
+      const modal = document.createElement('div');
+      modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+      modal.innerHTML = `
+        <div class="bg-white rounded-xl p-6 max-w-sm w-full">
+          <h3 class="text-xl font-bold mb-4">カテゴリー削除</h3>
+          <p class="text-gray-700 mb-6">「${categoryLabel}」を削除してもよろしいですか？</p>
+          <div class="flex gap-3">
+            <button id="cancel-delete" class="flex-1 px-4 py-3 bg-gray-200 text-gray-800 rounded-lg font-semibold hover:bg-gray-300 transition-all duration-200">
+              キャンセル
+            </button>
+            <button id="confirm-delete" class="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition-all duration-200">
+              削除
+            </button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      document.getElementById('cancel-delete').addEventListener('click', () => modal.remove());
+      document.getElementById('confirm-delete').addEventListener('click', () => {
+        customCategories = customCategories.filter(c => c.id !== categoryId);
+        if (currentCategory === categoryId) {
+          currentCategory = "";
+          document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('ring-4', 'ring-purple-400'));
+          document.querySelectorAll('.custom-category-btn').forEach(b => b.classList.remove('ring-4', 'ring-purple-400'));
+        }
+        renderCustomCategories();
+        modal.remove();
+        showMessage('カテゴリーを削除しました');
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+    }
+
+    function showMessage(msg) {
+      const toast = document.createElement('div');
+      toast.className = 'fixed top-4 right-4 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+      toast.textContent = msg;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 2000);
+    }
+
+    const dataHandler = {
+      onDataChanged(data) {
+        expenses = data;
+        renderExpenses();
+      }
+    };
+
+    async function init() {
+      renderApp();
+      
+      const initResult = await window.dataSdk.init(dataHandler);
+      if (!initResult.isOk) {
+        showMessage('初期化エラーが発生しました');
+        return;
+      }
+
+      if (window.elementSdk) {
+        window.elementSdk.init({
+          defaultConfig,
+          onConfigChange,
+          mapToCapabilities: (config) => ({
+            recolorables: [
+              {
+                get: () => config.background_color || defaultConfig.background_color,
+                set: (value) => {
+                  config.background_color = value;
+                  window.elementSdk.setConfig({ background_color: value });
+                }
+              },
+              {
+                get: () => config.surface_color || defaultConfig.surface_color,
+                set: (value) => {
+                  config.surface_color = value;
+                  window.elementSdk.setConfig({ surface_color: value });
+                }
+              },
+              {
+                get: () => config.text_color || defaultConfig.text_color,
+                set: (value) => {
+                  config.text_color = value;
+                  window.elementSdk.setConfig({ text_color: value });
+                }
+              },
+              {
+                get: () => config.primary_action_color || defaultConfig.primary_action_color,
+                set: (value) => {
+                  config.primary_action_color = value;
+                  window.elementSdk.setConfig({ primary_action_color: value });
+                }
+              },
+              {
+                get: () => config.secondary_action_color || defaultConfig.secondary_action_color,
+                set: (value) => {
+                  config.secondary_action_color = value;
+                  window.elementSdk.setConfig({ secondary_action_color: value });
+                }
+              }
+            ],
+            borderables: [],
+            fontEditable: undefined,
+            fontSizeable: undefined
+          }),
+          mapToEditPanelValues: (config) => new Map([
+            ["app_title", config.app_title || defaultConfig.app_title],
+            ["drink_label", config.drink_label || defaultConfig.drink_label],
+            ["shopping_label", config.shopping_label || defaultConfig.shopping_label],
+            ["transport_label", config.transport_label || defaultConfig.transport_label]
+          ])
+        });
+      }
+    }
+
+    init();
+  </script>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9b395b76c13de394',t:'MTc2NjY3NjM5MS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
